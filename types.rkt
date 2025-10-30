@@ -10,7 +10,9 @@
          * /
          +
          print
+         lambda
          define
+         (rename-out [typed-apply #%app])
          (for-syntax conversions))
 
 (require (for-syntax "type-map.rkt")
@@ -70,20 +72,21 @@
 
 (begin-for-syntax
   (define (sequentialize-Λ-stx stx)
-    (let loop ([bvs/rev '()])
+    (let loop ([bvs/rev '()]
+               [stx stx])
       (syntax-parse stx
         [(~Λ [bv : k] body)
          (loop (cons #'(bv : k) bvs/rev)
                #'body)]
         [_
-         #`(#,(reverse bvs/rev) stx)])))
+         #`(#,(reverse bvs/rev) #,stx)])))
 
-  (define-for-syntax ~Λ+
+  (define-syntax ~Λ+
     (pattern-expander
      (syntax-parser
        [(_ tvs-pat body-pat)
         #'(~or* (~and lam
-                      (~Λ _ _)
+                      (~Λ [_ : _] _)
                       (~parse (tvs-pat body-pat)
                               (sequentialize-Λ-stx #'lam)))
                 (~and (~parse tvs-pat #'())
@@ -566,13 +569,10 @@
         #;(printf "bound symbols:\n~a\n" (syntax-bound-symbols this-syntax))]
   [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
   [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
-  #:do [(displayln '+A)]
   [⊢ u1 ≫ _ ⇒ m1]
   [⊢ u2 ≫ _ ⇒ m2]
-  #:do [(displayln '+B)]
   [⊢ m1 ≫ _ ⇐ Measure]
   [⊢ m2 ≫ _ ⇐ Measure]
-  #:do [(displayln '+C)]
   #:do [
         (define m1+ (normalize #'m1))
         (define m2+ (normalize #'m2))
@@ -586,7 +586,6 @@
         (define-values (scale1 scale2 constraints res-tys)
           (bridge-units-of-common-measure m1+ u1+ u2+ #:src this-syntax))
         ]
-  #:do [(displayln '+D)]
   #:with u (denormalize res-tys)
   --------------------
   [⊢ (+- #,(scale-with-conversions #'e1- scale1 constraints this-syntax)
@@ -718,3 +717,94 @@
      ⇒ (→ (ConversionConstraints cc ...)
           body-ty
           ty ...)])
+
+(define-typed-syntax (typed-apply fn-exp arg-exp ...) ≫
+  #:do [(displayln 'A)]
+  [⊢ fn-exp ≫ fn-exp- ⇒ fn-ty]
+  #:do [(printf "fn-ty:\n~a\n" (syntax->datum #'fn-ty))]
+  #:with (~Λ (A : B) C) #'fn-ty
+  #:do [(printf "A: ~a\nB:~a\nC:~a\n" #'A #'B #'C)
+        (printf "~a\n" (sequentialize-Λ-stx #'fn-ty))]
+  #:with (~Λ+ ([U : M] ...) (~→ (~ConversionConstraints (~<~> u1 u2) ...)
+                                ty-ret
+                                ty-arg ...)) #'fn-ty
+  #:do [(displayln 'B)]
+  #:fail-unless (stx-length>=? #'(ty-arg ...) #'(arg-exp ...))
+  (format "Required ~a arguments, received ~a" (stx-length #'(ty-arg ...)) (stx-length #'(arg-exp ...)))
+  [⊢ arg-exp ≫ arg-exp- ⇒ arg-ty] ...
+  #:do [(displayln 'C)]
+  #:do [
+        (define-values (subst-xs subst-tys unsolved)
+          (unify #'([U M] ...) #'([ty-arg arg-ty] ...) this-syntax))
+        ]
+  #:do [(displayln 'D)]
+  #:fail-unless (empty? unsolved) (format "Failed to solve for variables: ~a" unsolved)
+  #:with (ty-ret- (u1- u2-) ...) (substs subst-tys subst-xs #'(ty-ret (u1 u2) ...))
+  #:do [(displayln 'E)]
+  #:with dict-expr (build-conversion-dict-expr #'([u1 u1- u2 u2-] ...) this-syntax)
+  --------------------
+  [⊢ (#%app- fn-exp- dict-expr arg-exp- ...) ⇒ ty-ret-])
+
+(define-for-syntax (build-conversion-dict-expr ts ctx)
+  (syntax-parse ts
+    [([u1 u1- u2 u2-] ...)
+     #:with (key-nm ...) (stx-map conversion-name #'(u1 ...) #'(u2 ...))
+     #:with (scale ...) (for/list ([u (in-syntax #'(u1- ...))]
+                                   [v (in-syntax #'(u2- ...))])
+                          (match (reconcile-units u v)
+                            [#f
+                             (type-error #:src ctx
+                                         #:msg "unable to find common unit for ~a and ~a" (resugar* u) (resugar* v))]
+                            [(list s1 _s2 _common-unit)
+                             s1]))
+    #'(hash- (~@ 'key-nm 'scale) ...)]))
+
+(define-for-syntax (unify tvs0 constraints0 ctx)
+  (syntax-parse #`(#,tvs0 #,constraints0)
+    [(([U M] ...) ([ty-arg arg-ty] ...))
+     (define kind-constraints (for/fold ([tm (make-type-map)])
+                                        ([u (in-syntax #'(U ...))]
+                                         [m (in-syntax #'(M ...))])
+                                (type-map-set tm u m)))
+     (define eq-constraints (for/list ([t1 (in-syntax #'(ty-arg ...))]
+                                       [t2 (in-syntax #'(arg-ty ...))])
+                                 (list t1 t2)))
+     (define =? (current-typecheck-relation))
+     (let loop ([tvs kind-constraints]
+                [constraints eq-constraints]
+                [subst-xs '()]
+                [subst-tys '()])
+       (match constraints
+         ['()
+          (define unsolved (for/fold ([tvs tvs]
+                                      #:result (type-map-keys tvs))
+                                     ([x (in-list subst-xs)])
+                             (type-map-remove tvs x)))
+          (values subst-xs subst-tys unsolved)]
+         [(cons (list t1 t2) constraints*)
+          (syntax-parse (substs subst-tys subst-xs #`(#,t1 #,t2))
+            [(a b)
+             #:when (=? #'a #'b)
+             (loop tvs constraints* subst-xs subst-tys)]
+            [(X:id ty)
+             (when (stx-contains-id? #'ty #'X)
+               (type-error #:src ctx
+                           #:msg "Encountered recursive type constraint with ~a and ~a"
+                           (syntax->datum #'X)
+                           (resugar* #'ty)))
+             (define kind (type-map-ref tvs #'X))
+             (loop tvs
+                   (cons (list kind (typeof #'ty)) constraints)
+                   (cons #'X subst-xs)
+                   (cons #'ty subst-tys))
+             ]
+            [((~Num a) (~Num b))
+             (loop tvs (cons (list #'a #'b) constraints*) subst-xs subst-tys)]
+            [(a b)
+             (type-error #:src ctx
+                         #:msg "Failure during unification between ~a and ~a"
+                         #'a
+                         #'b)])
+          ]))
+     ])
+  )
