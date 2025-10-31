@@ -16,7 +16,11 @@
          (for-syntax conversions))
 
 (require (for-syntax "type-map.rkt")
-         turnstile/typedefs)
+         turnstile/typedefs
+         (only-in racket/hash hash-union))
+
+;; Runtime helper for merging conversion dictionaries
+(define hash-union- hash-union)
 
 (define-type Type : Type)
 
@@ -397,16 +401,11 @@
       #`(<~> #,u1 #,u2)))
 
   (define (scale-with-conversions stx scale conversions ctx)
-    (printf "scaling with conversions ~a\n" conversions)
     (define conversion-exprs
       (for/list ([c (in-list conversions)])
         (match-define (list u1 e1 u2 _e2) c)
-        (printf "conversions REF\nbinding:~a\n~a\n"
-                (identifier-binding (datum->syntax ctx 'conversions))
-                (syntax-debug-info (datum->syntax ctx 'conversions) #;(current-conversion-dict) (syntax-local-phase-level) #t)
-                #;(syntax-debug-info (syntax-local-introduce (current-conversion-dict))))
         (quasisyntax/loc stx
-          (*- (expt- (hash-ref- #,(datum->syntax ctx 'conversions) #;#,(syntax-local-introduce (current-conversion-dict))
+          (*- (expt- (hash-ref- #,(gen-conversions-id ctx)
                                 '#,(conversion-name u1 u2))
                      '#,e1)))))
     (cond
@@ -423,9 +422,92 @@
        (quasisyntax/loc stx
          (*- '#,scale #,@conversion-exprs #,stx))]))
 
+  (define (type-var-id? id)
+    (syntax-property id 'type-variable))
+
+  ;; Extract the original identifier from a type that may have been substituted
+  ;; Uses the 'orig syntax property to find the original variable name
+  ;; Looks for identifiers marked with 'type-variable property
+  (define (get-original-identifier ty)
+    (define orig-prop (syntax-property ty 'orig))
+    (cond
+      ;; If orig property exists and contains the substitution history
+      [(and orig-prop (pair? orig-prop))
+       ;; Search for an identifier marked as a type variable
+       (let loop ([prop orig-prop])
+         (cond
+           [(and (identifier? prop) (type-var-id? prop))
+            prop]
+           [(pair? prop)
+            (or (loop (car prop)) (loop (cdr prop)))]
+           [else #f]))]
+      ;; If no orig property, check if ty itself is a type variable
+      [(and (identifier? ty) (type-var-id? ty))
+       ty]
+      ;; Otherwise return as-is
+      [(identifier? ty) ty]
+      [else #f]))
+
   (define (conversion-name unit-from unit-to)
+    ;; Try to get original identifiers for stable naming across substitution
+    (define orig-from (or (get-original-identifier unit-from) unit-from))
+    (define orig-to (or (get-original-identifier unit-to) unit-to))
     (define (fmt t) (syntax->datum (resugar* t)))
-    (format-id unit-from "~a->~a" (fmt unit-from) (fmt unit-to)))
+    (format-id unit-from "~a->~a" (fmt orig-from) (fmt orig-to)))
+
+  ;; Constants for conversion dictionary names
+  (define CONVERSIONS-NAME 'conversions)
+  (define CONVERSIONS-INNER-NAME 'conversions/inner)
+
+  ;; Generate identifier for the merged conversion dictionary
+  (define (gen-conversions-id ctx)
+    (datum->syntax ctx CONVERSIONS-NAME))
+
+  ;; Generate identifier for this lambda's conversion parameter
+  (define (gen-conversions-inner-id ctx)
+    (datum->syntax ctx CONVERSIONS-INNER-NAME))
+
+  ;; Check if a constraint mentions any of the given type variables
+  ;; Assumes constraint is already expanded/normalized
+  (define (constraint-mentions-tvars? constraint tvars)
+    (syntax-parse constraint
+      [(~<~> u1 u2)
+       (define vars (append (collect-free-ids #'u1) (collect-free-ids #'u2)))
+       (for/or ([v (in-list vars)])
+         (for/or ([tv (in-list (syntax->list tvars))])
+           (free-identifier=? v tv)))]
+      [other #f]))
+
+  ;; Collect free identifiers in a type
+  (define (collect-free-ids ty)
+    (let loop ([ty ty]
+               [acc '()])
+      (syntax-parse ty
+        [(~ProdInt t1 t2)
+         (loop #'t2 (loop #'t1 acc))]
+        [(~DivInt t1 t2)
+         (loop #'t2 (loop #'t1 acc))]
+        [(~Num u)
+         (loop #'u acc)]
+        [~Dimensionless acc]
+        [x:id
+         (cons #'x acc)]
+        [_ acc])))
+
+  ;; Partition constraints based on whether they mention local type variables
+  (define (partition-constraints constraints local-tvars)
+    ;; First, expand all constraints to their normalized forms
+    (define constraints-expanded
+      (for/list ([c (in-list (syntax->list constraints))])
+        ((current-type-eval) c)))
+    (for/fold ([local '()]
+               [outer '()]
+               #:result (values (reverse local) (reverse outer)))
+              ([c (in-list constraints-expanded)])
+      (define mentions? (constraint-mentions-tvars? c local-tvars))
+      (if mentions?
+          (values (cons c local) outer)
+          (values local (cons c outer)))))
   )
 
 
@@ -465,6 +547,8 @@
   [(_ e1 e2)
    ≫
    ;; e.g. (* 3m 5s)
+   ;; [⊢ e1 ≫ e1- (⇒ : t) (⇒ ν (~effs cc1 ...))]
+   ;; #:do [(printf "e1 : ~a\n" #'t)]
    [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
    [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
    [⊢ u1 ≫ u1- ⇒ m1]
@@ -564,9 +648,6 @@
    ])
 
 (define-typed-syntax (+ e1 e2) ≫
-  #:do [(printf "expanding +\n")
-        (printf "conversions binding: ~a\n" (identifier-binding (datum->syntax this-syntax 'conversions)))
-        #;(printf "bound symbols:\n~a\n" (syntax-bound-symbols this-syntax))]
   [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
   [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
   [⊢ u1 ≫ _ ⇒ m1]
@@ -629,26 +710,14 @@
               [TermArg:id (~datum :) Ty] ...)
       body)
    ≫
-   [⊢ (define/fun/cont
-        ([TyArg Unit] ...)
-        (TyArg ...)
-        ([TermArg Ty] ...)
-        fun
-        body)
-      ≫ lam-
-      ⇒ fun-ty]
-   #:with fun- (generate-temporary #'fun)
    --------------------
-   [≻ (begin-
-        (define- fun- lam-)
-        (define-typed-variable-rename fun ≫ fun- : fun-ty))]
+   [≻ (define fun (lambda ([TyArg :: Unit] ... [TermArg : Ty] ...) body))]
    ])
 
 (define-typed-syntax define/fun/cont
   [(_ ([TyArg Unit] TyArgs ...)
       TyVars
       TermArgs
-      fun
       body)
    ≫
    #:cut
@@ -656,7 +725,7 @@
    [⊢ M ≫ M- ⇐ Measure]
    [[TyArg ≫ _ : Unit-]
     ⊢
-    (define/fun/cont (TyArgs ...) TyVars TermArgs fun body)
+    (define/fun/cont (TyArgs ...) TyVars TermArgs body)
     ≫
     body-
     ]
@@ -665,82 +734,93 @@
   [(_ ()
       (TyArg ...)
       ([TermArg Ty] ...)
-      fun
       body)
    ≫
    #:cut
    [⊢ (lambda ([TermArg : Ty] ...) body) ≫ lam- ⇒ lam-ty]
    #:do [(printf "\nRECEIVED expanded lambda!\n")]
-   ;; [[TermArg ≫ TermArg- : Ty]
-   ;;  ...
-   ;;  ⊢
-   ;;  body ≫ body-
-   ;;  (⇒ : body-ty)
-   ;;  (⇒ ν (~effs cc ...))]
    [⊢ TyArg ≫ TyArg- ⇒ K] ...
-   ;; #:with lam-ty #'(→ (ConversionConstraints cc ...)
-   ;;                    body-ty
-   ;;                    Ty ...)
    #:with Lam-ty #'(Λ+ ([TyArg- K] ...) lam-ty)
    --------------------
    [⊢ lam- ⇒ Lam-ty]])
 
-(define-for-syntax (unpack-conversions dict-id conversions body-stx)
-  (syntax-parse conversions
-    [()
-     body-stx]
-    [((~<~> u1 u2) ...)
-     #:with (nm ...) (stx-map conversion-name #'(u1 ...) #'(u2 ...))
-     (quasisyntax/loc body-stx
-       (let– ([nm (hash-ref- #,dict-id 'nm)]
-              ...)
-         #,body-stx))])
-  )
+(define-typed-syntax (lambda ([X:id (~datum ::) K] ... [x:id (~datum :) ty] ...) body) ≫
+  --------------------
+  [≻ (lambda-telescope ([X K] ...)
+                       (X ...)
+                       ([x ty] ...)
+                       body)])
 
-(define-typed-syntax (lambda ([x:id (~datum :) ty] ...) body) ≫
-  #:do [(printf "expanding lambda\n")]
-  #:with conversion-dict (format-id #'body "conversions")
-   ;; #:do [(printf "conversions bind\n~a\n~a\n"
-   ;;               (syntax-debug-info (current-conversion-dict))
-   ;;               (syntax-debug-info (syntax-local-introduce (current-conversion-dict))))
-   ;;       ]
-   [[x ≫ x- : ty]
+(define-typed-syntax lambda-telescope
+  [(_ ([TyArg Unit] TyArgs ...)
+      TyVars
+      TermArgs
+      body)
+   ≫
+   #:cut
+   [⊢ Unit ≫ Unit- ⇒ M]
+   [⊢ M ≫ M- ⇐ Measure]
+   #:with TyArg-marked (attach #'TyArg 'type-variable #t)
+   [[TyArg-marked ≫ _ : Unit-]
+    ⊢
+    #,(subst #'TyArg-marked #'TyArg #'(lambda-telescope (TyArgs ...) TyVars TermArgs body))
+    ≫
+    body-
+    ]
+   --------------------
+   [≻ body-]]
+  [(_ ()
+      (TyArg ...)
+      ([x ty] ...)
+      body)
+   ≫
+   #:cut
+   #:with conversions-merged (gen-conversions-id #'body)
+   #:with conversion-dict-inner (gen-conversions-inner-id #'body)
+   #:do [(define has-outer? (identifier-binding #'conversions-merged))]
+   [⊢ ty ≫ ty- ⇒ _] ...
+   [[x ≫ x- : ty-]
     ...
-    [conversion-dict ≫ conversion-dict- : Type]
+    [conversion-dict-inner ≫ conversion-dict-inner- : Type]
+    [conversions-merged ≫ conversions-merged- : Type]
     ⊢ body ≫ body-
     (⇒ : body-ty)
     (⇒ ν (~effs cc ...))]
-  #:do [(printf "\nEXPANDED LAMBDA!\n")]
-  --------------------
-  [⊢ (lambda- (conversion-dict- x- ...) body-
-              #;#,(unpack-conversions #'conversion-dict #'(cc ...) #'body-))
-     ⇒ (→ (ConversionConstraints cc ...)
-          body-ty
-          ty ...)])
+   [⊢ TyArg ≫ TyArg- ⇒ K] ...
+   #:do [
+         ;; Partition constraints: local vs outer
+         (define-values (local-cc outer-cc)
+           (partition-constraints #'(cc ...) #'(TyArg- ...)))
+         ]
+   #:with (local-cc* ...) local-cc
+   #:with (outer-cc* ...) outer-cc
+   #:with lam-ty #'(→ (ConversionConstraints local-cc* ...)
+                      body-ty
+                      ty- ...)
+   #:with Lam-ty #'(Λ+ ([TyArg- K] ...) lam-ty)
+   --------------------
+   [⊢ (lambda- (conversion-dict-inner- x- ...)
+        (let- ([conversions-merged- #,(if has-outer?
+                                          #'(hash-union- conversions-merged conversion-dict-inner-)
+                                          #'conversion-dict-inner-)])
+          body-))
+      (⇒ : Lam-ty)
+      (⇒ ν (outer-cc* ...))]])
 
 (define-typed-syntax (typed-apply fn-exp arg-exp ...) ≫
-  #:do [(displayln 'A)]
   [⊢ fn-exp ≫ fn-exp- ⇒ fn-ty]
-  #:do [(printf "fn-ty:\n~a\n" (syntax->datum #'fn-ty))]
-  #:with (~Λ (A : B) C) #'fn-ty
-  #:do [(printf "A: ~a\nB:~a\nC:~a\n" #'A #'B #'C)
-        (printf "~a\n" (sequentialize-Λ-stx #'fn-ty))]
   #:with (~Λ+ ([U : M] ...) (~→ (~ConversionConstraints (~<~> u1 u2) ...)
                                 ty-ret
                                 ty-arg ...)) #'fn-ty
-  #:do [(displayln 'B)]
   #:fail-unless (stx-length>=? #'(ty-arg ...) #'(arg-exp ...))
   (format "Required ~a arguments, received ~a" (stx-length #'(ty-arg ...)) (stx-length #'(arg-exp ...)))
   [⊢ arg-exp ≫ arg-exp- ⇒ arg-ty] ...
-  #:do [(displayln 'C)]
   #:do [
         (define-values (subst-xs subst-tys unsolved)
           (unify #'([U M] ...) #'([ty-arg arg-ty] ...) this-syntax))
         ]
-  #:do [(displayln 'D)]
   #:fail-unless (empty? unsolved) (format "Failed to solve for variables: ~a" unsolved)
   #:with (ty-ret- (u1- u2-) ...) (substs subst-tys subst-xs #'(ty-ret (u1 u2) ...))
-  #:do [(displayln 'E)]
   #:with dict-expr (build-conversion-dict-expr #'([u1 u1- u2 u2-] ...) this-syntax)
   --------------------
   [⊢ (#%app- fn-exp- dict-expr arg-exp- ...) ⇒ ty-ret-])
@@ -800,6 +880,10 @@
              ]
             [((~Num a) (~Num b))
              (loop tvs (cons (list #'a #'b) constraints*) subst-xs subst-tys)]
+            [((~ProdInt a1 a2) (~ProdInt b1 b2))
+             (loop tvs (cons (list #'a1 #'b1) (cons (list #'a2 #'b2) constraints*)) subst-xs subst-tys)]
+            [((~DivInt a1 a2) (~DivInt b1 b2))
+             (loop tvs (cons (list #'a1 #'b1) (cons (list #'a2 #'b2) constraints*)) subst-xs subst-tys)]
             [(a b)
              (type-error #:src ctx
                          #:msg "Failure during unification between ~a and ~a"
