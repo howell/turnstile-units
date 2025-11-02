@@ -510,143 +510,6 @@
           (values local (cons c outer)))))
   )
 
-
-
-
-
-(define-typed-syntax *
-  [(_ e1 e2)
-   ≫
-   ;; e.g. (* Distance Distance)
-   [⊢ e1 ≫ e1- ⇒ ~Measure]
-   [⊢ e2 ≫ e2- ⇒ ~Measure]
-   #:do [(define-values (_ denormalized) (normalize&combine #'e1- #'e2- #:expt-scaler -1))]
-   --------------------
-   [⊢ #,denormalized ⇒ Measure]]
-  [(_ e1 e2)
-   ≫
-   [⊢ e1 ≫ u1- ⇒ m1]
-   [⊢ e2 ≫ u2- ⇒ m2]
-   [⊢ m1 ≫ m1- ⇐ Measure]
-   [⊢ m2 ≫ m2- ⇐ Measure]
-   #:do [
-         (define-values (_a _b normalized-measures denormalized-measures)
-           (normalize&combine #'m1- #'m2-))
-         (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
-           (normalize&combine #'u1- #'u2-))
-         (define-values (_s1 _s2  _constraints combined-units)
-           (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src this-syntax))
-         (define res-units (denormalize combined-units))
-         #;(printf "combined measures: ~a\n" (format-normalized normalized-measures))
-         #;(printf "combined units: ~a\n" (format-normalized combined-units))
-         #;(printf "res-measure: ~a\n" (syntax->datum denormalized-measures))
-         #;(printf "res-units: ~a\n" (syntax->datum res-units))
-         ]
-   --------------------
-   [⊢ #,res-units ⇒ #,denormalized-measures]]
-  [(_ e1 e2)
-   ≫
-   ;; e.g. (* 3m 5s)
-   ;; [⊢ e1 ≫ e1- (⇒ : t) (⇒ ν (~effs cc1 ...))]
-   ;; #:do [(printf "e1 : ~a\n" #'t)]
-   [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
-   [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
-   [⊢ u1 ≫ u1- ⇒ m1]
-   [⊢ u2 ≫ u2- ⇒ m2]
-   [⊢ m1 ≫ m1- ⇐ Measure]
-   [⊢ m2 ≫ m2- ⇐ Measure]
-   #:do [
-         (define-values (_a _b normalized-measures denormalized-measures)
-           (normalize&combine #'m1- #'m2-))
-         #;(printf "combined measures: ~a\n" (format-normalized normalized-measures))
-         (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
-           (normalize&combine #'u1- #'u2-))
-         (define-values (scale1 scale2 constraints combined-units)
-           (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src this-syntax))
-         #;(printf "combined units: ~a\n" (format-normalized combined-units))
-         (define res-units (denormalize combined-units))
-         #;(printf "res-measure: ~a\n" (syntax->datum denormalized-measures))
-         #;(printf "res-units: ~a\n" (syntax->datum res-units))
-         ]
-   --------------------
-   [⊢ (*- #,(scale-with-conversions #'e1- scale1 constraints this-syntax)
-          #,(scale-with-conversions #'e2- scale2 '() this-syntax))
-      (⇒ : (Num #,res-units))
-      (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))]])
-
-(define-typed-syntax /
-  [(_ 1 e)
-   ≫
-   ;; e.g. (/ 1 Time)
-   [⊢ e ≫ e- ⇒ ~Measure]
-   --------------------
-   [≻ (Div 1 e-)]]
-  [(_ 1 e)
-   ≫
-   ;; e.g. (/ 1 Seconds)
-   [⊢ e ≫ e- ⇒ t]
-   [⊢ t ≫ _ ⇐ Measure]
-   --------------------
-   [≻ (Div 1 e-)]]
-  [(_ e1 e2)
-   ≫
-   ;; e.g. (/ Distance Time)
-   [⊢ e1 ≫ e1- ⇒ ~Measure]
-   [⊢ e2 ≫ e2- ⇒ ~Measure]
-   #:do [(define-values (_ denormalized) (normalize&combine #'e1- #'e2- #:expt-scaler -1))]
-   --------------------
-   [⊢ #,denormalized ⇒ Measure]]
-  [(_ e1 e2)
-   ≫
-   ;; e.g. (/ Meters Second)
-   [⊢ e1 ≫ u1- ⇒ m1]
-   [⊢ e2 ≫ u2- ⇒ m2]
-   [⊢ m1 ≫ m1- ⇐ Measure]
-   [⊢ m2 ≫ m2- ⇐ Measure]
-   #:do [
-         (define-values (_a _b normalized-measures denormalized-measures)
-           (normalize&combine #'m1- #'m2- #:expt-scaler -1))
-         (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
-           (normalize&combine #'u1- #'u2- #:expt-scaler -1))
-         (define-values (_s1 _s2 _constraints combined-units)
-           (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src this-syntax))
-         (define res-units (denormalize combined-units))
-         #;(printf "combined measures: ~a\n" (format-normalized normalized-measures))
-         #;(printf "combined units: ~a\n" (format-normalized combined-units))
-         #;(printf "res-measure: ~a\n" (syntax->datum denormalized-measures))
-         #;(printf "res-units: ~a\n" (syntax->datum res-units))
-         ]
-   --------------------
-   [⊢ #,res-units ⇒ #,denormalized-measures]]
-  [(_ e1 e2)
-   ≫
-   ;; e.g. (/ 3m 5s)
-   [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
-   [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
-   [⊢ u1 ≫ u1- ⇒ m1]
-   [⊢ u2 ≫ u2- ⇒ m2]
-   [⊢ m1 ≫ m1- ⇐ Measure]
-   [⊢ m2 ≫ m2- ⇐ Measure]
-   #:do [
-         (define-values (_a _b normalized-measures denormalized-measures)
-           (normalize&combine #'m1- #'m2- #:expt-scaler -1))
-         (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
-           (normalize&combine #'u1- #'u2- #:expt-scaler -1))
-         (define-values (scale1 scale2 constraints combined-units)
-           (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src this-syntax))
-         (define res-units (denormalize combined-units))
-         #;(printf "combined measures: ~a\n" (format-normalized normalized-measures))
-         #;(printf "combined units: ~a\n" (format-normalized combined-units))
-         #;(printf "res-measure: ~a\n" (syntax->datum denormalized-measures))
-         #;(printf "res-units: ~a\n" (syntax->datum res-units))
-         ]
-   --------------------
-   [⊢ (/- #,(scale-with-conversions #'e1- scale1 constraints this-syntax)
-          #,(scale-with-conversions #'e2- scale2 '() this-syntax))
-      (⇒ : (Num #,res-units))
-      (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))]
-   ])
-
 (define-for-syntax (check-num-ty t ctx)
   (syntax-parse t
     [(~Num u)
@@ -654,6 +517,63 @@
     [_
      (type-error #:src ctx
                  #:msg "Required a Num type, got ~a" (resugar* t))]))
+
+(define-for-syntax (check-*-like-op op- e1 e2 expt-scaler ctx)
+  (syntax-parse/typecheck null
+    [_
+     ≫
+     ;; e.g. (op Distance Time)
+     [⊢ #,e1 ≫ e1- ⇐ Measure]
+     #:cut
+     [⊢ #,e2 ≫ e2- ⇐ Measure]
+     #:do [(define-values (_ denormalized) (normalize&combine #'e1- #'e2- #:expt-scaler expt-scaler))]
+     --------------------
+     [⊢ #,denormalized ⇒ Measure]]
+    [_
+     ≫
+     ;; e.g. (op Meters Second)
+     [⊢ #,e1 ≫ u1- ⇒ m1]
+     [⊢ #,e2 ≫ u2- ⇒ m2]
+     [⊢ m1 ≫ m1- ⇐ Measure]
+     #:cut
+     [⊢ m2 ≫ m2- ⇐ Measure]
+     #:do [
+           (define-values (_a _b normalized-measures denormalized-measures)
+             (normalize&combine #'m1- #'m2- #:expt-scaler expt-scaler))
+           (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
+             (normalize&combine #'u1- #'u2- #:expt-scaler expt-scaler))
+           (define-values (_s1 _s2 _constraints combined-units)
+             (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src ctx))
+           (define res-units (denormalize combined-units))
+           ]
+     --------------------
+     [⊢ #,res-units ⇒ #,denormalized-measures]]
+     [_
+      ≫
+      #:cut
+      ;; e.g. (op 3m 5s)
+      [⊢ #,e1 ≫ e1- (⇒ : t1) (⇒ ν (~effs cc1 ...))]
+      #:with u1 (check-num-ty #'t1 e1)
+      [⊢ #,e2 ≫ e2- (⇒ : t2) (⇒ ν (~effs cc2 ...))]
+      #:with u2 (check-num-ty #'t2 e2)
+      [⊢ u1 ≫ u1- ⇒ m1]
+      [⊢ u2 ≫ u2- ⇒ m2]
+      [⊢ m1 ≫ m1- ⇐ Measure]
+      [⊢ m2 ≫ m2- ⇐ Measure]
+      #:do [
+            (define-values (_a _b normalized-measures denormalized-measures)
+              (normalize&combine #'m1- #'m2- #:expt-scaler expt-scaler))
+            (define-values (u1+ neg-u2+ _normalized-units _denormalized-units)
+              (normalize&combine #'u1- #'u2- #:expt-scaler expt-scaler))
+            (define-values (scale1 scale2 constraints combined-units)
+              (bridge-units-of-common-measure normalized-measures u1+ neg-u2+ #:src ctx))
+            (define res-units (denormalize combined-units))
+            ]
+      --------------------
+      [⊢ (#,op- #,(scale-with-conversions #'e1- scale1 constraints ctx)
+              #,(scale-with-conversions #'e2- scale2 '() ctx))
+         (⇒ : (Num #,res-units))
+         (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))]]))
 
 (define-for-syntax (check-+-like-op op- e1 e2 ctx)
   (syntax-parse/typecheck null
@@ -694,6 +614,30 @@
 (define-typed-syntax (- e1 e2) ≫
   ---
   [≻ #,(check-+-like-op #'-- #'e1 #'e2 this-syntax)])
+
+(define-typed-syntax (* e1 e2) ≫
+  ---
+  [≻ #,(check-*-like-op #'*- #'e1 #'e2 1 this-syntax)])
+
+(define-typed-syntax /
+  [(_ 1 e)
+   ≫
+   ;; e.g. (/ 1 Time)
+   [⊢ e ≫ e- ⇐ Measure]
+   --------------------
+   [≻ (Div 1 e-)]]
+  [(_ 1 e)
+   ≫
+   ;; e.g. (/ 1 Seconds)
+   [⊢ e ≫ e- ⇒ t]
+   [⊢ t ≫ _ ⇐ Measure]
+   --------------------
+   [≻ (Div 1 e-)]]
+  [(_ e1 e2)
+   ≫
+   --------------------
+   [≻ #,(check-*-like-op #'/- #'e1 #'e2 -1 this-syntax)]])
+
 
 (define-typed-syntax (:: n:number U) ≫
   [⊢ U ≫ U- ⇒ M]
