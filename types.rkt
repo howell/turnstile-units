@@ -8,7 +8,7 @@
          define-unit
          ::
          * /
-         +
+         + -
          print
          lambda
          define
@@ -647,33 +647,53 @@
       (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))]
    ])
 
-(define-typed-syntax (+ e1 e2) ≫
-  [⊢ e1 ≫ e1- (⇒ : (~Num u1)) (⇒ ν (~effs cc1 ...))]
-  [⊢ e2 ≫ e2- (⇒ : (~Num u2)) (⇒ ν (~effs cc2 ...))]
-  [⊢ u1 ≫ _ ⇒ m1]
-  [⊢ u2 ≫ _ ⇒ m2]
-  [⊢ m1 ≫ _ ⇐ Measure]
-  [⊢ m2 ≫ _ ⇐ Measure]
+(define-for-syntax (check-num-ty t ctx)
+  (syntax-parse t
+    [(~Num u)
+     #'u]
+    [_
+     (type-error #:src ctx
+                 #:msg "Required a Num type, got ~a" (resugar* t))]))
+
+(define-for-syntax (check-+-like-op op- e1 e2 ctx)
+  (syntax-parse/typecheck null
+    [_
+     ≫
+     [⊢ #,e1 ≫ e1- (⇒ : t1) (⇒ ν (~effs cc1 ...))]
+     #:with u1 (check-num-ty #'t1 e1)
+     [⊢ #,e2 ≫ e2- (⇒ : t2) (⇒ ν (~effs cc2 ...))]
+     #:with u2 (check-num-ty #'t2 e2)
+     [⊢ u1 ≫ _ ⇒ m1]
+     [⊢ u2 ≫ _ ⇒ m2]
+     [⊢ m1 ≫ _ ⇐ Measure]
+     [⊢ m2 ≫ _ ⇐ Measure]
   #:do [
         (define m1+ (normalize #'m1))
         (define m2+ (normalize #'m2))
-        ]
-  #:fail-unless (type-map-equal/in-order? m1+ m2+) (format "Can only add equivalent measures; got ~a and ~a"
-                                                           (format-normalized m1+)
-                                                           (format-normalized m2+))
-  #:do [
+        (unless (type-map-equal/in-order? m1+ m2+)
+          (type-error #:src ctx
+                      #:msg "Operands must have equivalent measures; got ~a and ~a"
+                      (format-normalized m1+)
+                      (format-normalized m2+)))
         (define u1+ (normalize #'u1))
         (define u2+ (normalize #'u2))
         (define-values (scale1 scale2 constraints res-tys)
-          (bridge-units-of-common-measure m1+ u1+ u2+ #:src this-syntax))
+          (bridge-units-of-common-measure m1+ u1+ u2+ #:src ctx))
         ]
   #:with u (denormalize res-tys)
   --------------------
-  [⊢ (+- #,(scale-with-conversions #'e1- scale1 constraints this-syntax)
-         #,(scale-with-conversions #'e2- scale2 '() this-syntax))
+  [⊢ (#,op- #,(scale-with-conversions #'e1- scale1 constraints ctx)
+          #,(scale-with-conversions #'e2- scale2 '() ctx))
      (⇒ : (Num u))
-     (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))])
+     (⇒ ν (cc1 ... cc2 ... #,@(constraint-effs constraints)))]]))
 
+(define-typed-syntax (+ e1 e2) ≫
+  ---
+  [≻ #,(check-+-like-op #'+- #'e1 #'e2 this-syntax)])
+
+(define-typed-syntax (- e1 e2) ≫
+  ---
+  [≻ #,(check-+-like-op #'-- #'e1 #'e2 this-syntax)])
 
 (define-typed-syntax (:: n:number U) ≫
   [⊢ U ≫ U- ⇒ M]
