@@ -13,8 +13,14 @@
          lambda
          define
          (rename-out [typed-apply #%app])
-         (for-syntax conversions))
+         require
+         #%module-begin
+         #%datum
+         #%top-interaction
+         (for-syntax conversions
+                     (all-from-out racket/base)))
 
+(require (for-syntax racket/base))
 (require (for-syntax "type-map.rkt")
          turnstile/typedefs
          (only-in racket/hash hash-union))
