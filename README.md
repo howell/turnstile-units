@@ -7,10 +7,10 @@ things like this:
 ```rkt
 (define-measure Mass)
 (define-unit Pounds : Mass)
-(define-unit Killograms = 0.453592 * Pounds)
+(define-unit Kilograms = 0.453592 * Pounds)
 
-(print (+ (:: 8 Pounds) (:: 4 Killograms)))
-;; => 21.63699536147022 :: Killograms
+(print (+ (:: 8 Pounds) (:: 4 Kilograms)))
+;; => 21.63699536147022 :: Kilograms
 ```
 
 One of the key features is that no measurements or units are baked into the

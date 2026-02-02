@@ -103,9 +103,9 @@
 
 (define-measure Mass)
 (define-unit Pounds : Mass)
-(define-unit Killograms = 0.453592 * Pounds)
+(define-unit Kilograms = 0.453592 * Pounds)
 
-(print (+ (:: 8 Pounds) (:: 4 Killograms)))
+(print (+ (:: 8 Pounds) (:: 4 Kilograms)))
 
 (define falling (:: 9.8 (/ Meters (* Seconds Seconds))))
 (define wind-resistance (:: 3 (/ Feet (* Minutes Minutes))))
