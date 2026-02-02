@@ -100,3 +100,14 @@
 
 
 (print (- (:: 1 Yards) (:: 1 Feet)))
+
+(define-measure Mass)
+(define-unit Pounds : Mass)
+(define-unit Killograms = 0.453592 * Pounds)
+
+(print (+ (:: 8 Pounds) (:: 4 Killograms)))
+
+(define falling (:: 9.8 (/ Meters (* Seconds Seconds))))
+(define wind-resistance (:: 3 (/ Feet (* Minutes Minutes))))
+(print (as (- falling wind-resistance)
+           (/ Meters (* Seconds Seconds))))

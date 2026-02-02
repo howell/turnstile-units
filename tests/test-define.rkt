@@ -9,7 +9,7 @@
   (+ (:: 10 Meters) d))
 
 
-(print (add-10m (:: 5 Kilometers)))
+(print (add-10m (:: 5 KiloMeters)))
 
 #;(add-10m (:: 1 Seconds))
 
@@ -21,6 +21,6 @@
 
 (define updater (update-position (:: 0 Meters)))
 (print updater)
-(define velocity-updater (updater (:: 5 (/ Kilometers Hours))))
+(define velocity-updater (updater (:: 5 (/ KiloMeters Hours))))
 (print (velocity-updater (:: 10 Seconds)))
 (print (velocity-updater (:: 10 Hours)))

@@ -7,6 +7,7 @@
          define-measure
          define-unit
          ::
+         as
          * /
          + -
          print
@@ -648,12 +649,19 @@
 (define-typed-syntax (:: n:number U) ≫
   [⊢ U ≫ U- ⇒ M]
   #:fail-unless ((current-typecheck-relation) #'U- ((current-type-eval) #'Unit))
-                (format ":: expected Unit, got ~a" #'U-)
+  (format ":: expected Unit, got ~a" #'U-)
   [⊢ M ≫ _ ⇐ Measure]
   --------------------
   [⊢ n
      (⇒ : (Num U-))])
 
+
+(define-typed-syntax (as e:expr U) ≫
+  [⊢ U ≫ U- ⇒ M]
+  #:fail-unless ((current-typecheck-relation) #'U- ((current-type-eval) #'Unit))
+  (format "as expected Unit, got ~a" #'U-)
+  --------------------
+  [≻ (+ e (:: 0.0 U-))])
 
 (define-typed-syntax (print e:expr) ≫
   [⊢ e ≫ e- ⇒ (~or* (~Num ty) ty)]
